@@ -1,0 +1,10 @@
+query GetMyHealthMetrics @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users as it fetches only the logged in user's data.") {
+  healthMetrics(where: {userId: {eq_expr: "auth.uid"}}) {
+    id
+    metricType
+    value
+    unit
+    recordedAt
+    notes
+  }
+}

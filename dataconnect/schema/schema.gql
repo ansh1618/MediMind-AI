@@ -1,0 +1,43 @@
+type User @table {
+  displayName: String!
+  createdAt: Timestamp!
+  email: String
+  photoUrl: String
+  dateOfBirth: Date
+}
+
+type SymptomCheck @table {
+  user: User!
+  queryText: String!
+  responseJson: String!
+  createdAt: Timestamp!
+  notes: String
+}
+
+type Condition @table {
+  name: String!
+  description: String!
+  commonSymptoms: [String!]!
+  createdAt: Timestamp!
+  causes: String
+  treatmentOptions: String
+  whenToSeeDoctor: String
+}
+
+type HealthMetric @table {
+  user: User!
+  metricType: String!
+  value: Float!
+  unit: String!
+  recordedAt: Timestamp!
+  notes: String
+}
+
+type HealthTopic @table {
+  title: String!
+  content: String!
+  category: String!
+  createdAt: Timestamp!
+  author: String
+  tags: [String!]
+}

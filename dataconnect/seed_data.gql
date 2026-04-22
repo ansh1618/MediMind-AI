@@ -1,0 +1,79 @@
+mutation CreateDemoData @transaction @auth(level: USER, insecureReason: "Populating the database with seed data for demonstration purposes is safe for any authenticated user.") {
+  user1: user_insert(data: {
+    id: "550e8400-e29b-41d4-a716-44665544000a",
+    displayName: "Alice Smith",
+    email: "alice.smith@example.com",
+    createdAt: "2023-01-01T10:00:00Z",
+    dateOfBirth: "1990-05-15"
+  })
+  user2: user_insert(data: {
+    id: "550e8400-e29b-41d4-a716-44665544000b",
+    displayName: "Bob Johnson",
+    email: "bob.johnson@example.com",
+    createdAt: "2023-01-02T11:00:00Z",
+    dateOfBirth: "1988-11-22"
+  })
+  condition1: condition_insert(data: {
+    id: "550e8400-e29b-41d4-a716-44665544000c",
+    name: "Common Cold",
+    description: "A viral infectious disease of the upper respiratory tract.",
+    commonSymptoms: ["runny nose", "sore throat", "cough"],
+    createdAt: "2023-01-03T12:00:00Z",
+    causes: "Rhinovirus",
+    treatmentOptions: "Rest, fluids, over-the-counter medication.",
+    whenToSeeDoctor: "High fever, difficulty breathing, symptoms worsening."
+  })
+  condition2: condition_insert(data: {
+    id: "550e8400-e29b-41d4-a716-44665544000d",
+    name: "Influenza",
+    description: "A common viral infection that can be deadly, especially in high-risk groups.",
+    commonSymptoms: ["fever", "body aches", "fatigue"],
+    createdAt: "2023-01-04T13:00:00Z",
+    causes: "Influenza virus",
+    treatmentOptions: "Antiviral drugs, rest, fluids.",
+    whenToSeeDoctor: "Shortness of breath, persistent vomiting, sudden dizziness."
+  })
+  healthMetric1: healthMetric_insert(data: {
+    id: "550e8400-e29b-41d4-a716-44665544000e",
+    userId: "550e8400-e29b-41d4-a716-44665544000a",
+    metricType: "Weight",
+    value: 70.5,
+    unit: "kg",
+    recordedAt: "2023-01-05T08:30:00Z",
+    notes: "Morning weight after workout."
+  })
+  healthMetric2: healthMetric_insert(data: {
+    id: "550e8400-e29b-41d4-a716-44665544000f",
+    userId: "550e8400-e29b-41d4-a716-44665544000a",
+    metricType: "Steps",
+    value: 10245.0,
+    unit: "steps",
+    recordedAt: "2023-01-05T20:00:00Z"
+  })
+  healthTopic1: healthTopic_insert(data: {
+    id: "550e8400-e29b-41d4-a716-446655440010",
+    title: "Understanding Diabetes",
+    content: "An article covering the basics of diabetes, types, symptoms, and management.",
+    category: "Chronic Diseases",
+    createdAt: "2023-01-06T09:00:00Z",
+    author: "Dr. Health Info",
+    tags: ["diabetes", "chronic", "blood sugar"]
+  })
+  healthTopic2: healthTopic_insert(data: {
+    id: "550e8400-e29b-41d4-a716-446655440011",
+    title: "Benefits of Regular Exercise",
+    content: "Exploring the physical and mental health benefits of incorporating exercise into daily life.",
+    category: "Wellness",
+    createdAt: "2023-01-07T10:00:00Z",
+    author: "Wellness Expert",
+    tags: ["exercise", "fitness", "mental health"]
+  })
+  symptomCheck1: symptomCheck_insert(data: {
+    id: "550e8400-e29b-41d4-a716-446655440012",
+    userId: "550e8400-e29b-41d4-a716-44665544000a",
+    queryText: "Headache and fever",
+    responseJson: "{\"possibleConditions\": [\"Common Cold\", \"Influenza\"]}",
+    createdAt: "2023-01-08T14:30:00Z",
+    notes: "User reported symptoms after feeling unwell."
+  })
+}
