@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileText, Loader2, CheckCircle, AlertTriangle, Brain, Sparkles, User as UserIcon, Camera, X } from "lucide-react";
+import { Upload, FileText, Loader2, CheckCircle, AlertTriangle, Brain, Sparkles, User as UserIcon, Camera, X, Mail } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -218,6 +219,7 @@ export default function RecordUpload() {
   const [prediction, setPrediction] = useState<PredictResult | null>(null);
   const [saved, setSaved] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [patientEmail, setPatientEmail] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -289,10 +291,15 @@ export default function RecordUpload() {
 
   const handleSave = async () => {
     if (!result || !user) return;
+    if (!patientEmail.trim()) {
+      toast({ title: "Patient email required", description: "Enter the patient's registered email to link this record.", variant: "destructive" });
+      return;
+    }
     try {
       const { error } = await supabase.from("patient_records").insert({
         created_by: user.id,
         patient_name: result.patient_name,
+        patient_email: patientEmail.trim().toLowerCase(),
         age: result.age,
         gender: result.gender,
         chief_complaint: result.chief_complaint,
@@ -308,7 +315,7 @@ export default function RecordUpload() {
       });
       if (error) throw error;
       setSaved(true);
-      toast({ title: "Record saved!", description: `${result.patient_name}'s record stored successfully.` });
+      toast({ title: "Record saved!", description: `${result.patient_name}'s record linked to ${patientEmail} successfully.` });
     } catch (e) {
       toast({ title: "Save failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     }
@@ -537,16 +544,34 @@ export default function RecordUpload() {
                 </div>
               )}
 
+              {/* Patient email linkage */}
+              {!saved && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-primary" />
+                    <p className="text-sm font-semibold">Link to Patient Account</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Enter the patient's registered email so they can view this record in their portal.</p>
+                  <Input
+                    type="email"
+                    placeholder="patient@email.com"
+                    value={patientEmail}
+                    onChange={(e) => setPatientEmail(e.target.value)}
+                    className="text-sm"
+                  />
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-3">
                 {saved ? (
                   <div className="flex items-center gap-2 text-emerald-500 text-sm">
                     <CheckCircle className="w-4 h-4" />
-                    Saved to database
+                    Saved &amp; linked to {patientEmail}
                   </div>
                 ) : (
                   <Button onClick={handleSave} className="gradient-primary text-primary-foreground border-0" size="sm">
                     <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
-                    Save to Patient Records
+                    Save &amp; Link to Patient
                   </Button>
                 )}
               </div>

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { HeartPulse, TrendingUp, Sparkles, Loader2, Upload, FileText, Save } from "lucide-react";
+import { HeartPulse, TrendingUp, Sparkles, Loader2, Upload, FileText, Save, FlaskConical, Stethoscope, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,30 @@ const levelStyles: Record<RiskLevel, { bg: string; text: string; ring: string }>
   High: { bg: "bg-destructive/10", text: "text-destructive", ring: "ring-destructive/30" },
 };
 
+const riskColor = (level: string) => {
+  if (level === "CRITICAL" || level === "HIGH") return "text-destructive";
+  if (level === "MODERATE") return "text-orange-500";
+  return "text-emerald-500";
+};
+
+interface DoctorRecord {
+  id: string;
+  created_at: string;
+  patient_name: string;
+  age: number;
+  gender: string;
+  chief_complaint: string;
+  diagnoses: string[];
+  medications: string[];
+  vitals: Record<string, string>;
+  lab_values: Record<string, { value: string; status: string }>;
+  risk_scores: {
+    diabetes?: { score: number; level: string };
+    cardiac?: { score: number; level: string };
+    renal?: { score: number; level: string };
+  };
+}
+
 export default function PatientDashboard() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -33,6 +57,11 @@ export default function PatientDashboard() {
   const [aiText, setAiText] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Doctor-linked records
+  const [doctorRecords, setDoctorRecords] = useState<DoctorRecord[]>([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
+
   const risk = useMemo(
     () =>
       predictRisk({
@@ -45,6 +74,27 @@ export default function PatientDashboard() {
   );
 
   const styles = levelStyles[risk.level];
+
+  // Fetch records linked to this patient's email by doctor
+  useEffect(() => {
+    if (!user?.email) return;
+    const fetchDoctorRecords = async () => {
+      setRecordsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("patient_records")
+          .select("*")
+          .eq("patient_email", user.email!.toLowerCase())
+          .order("created_at", { ascending: false });
+        if (!error && data) setDoctorRecords(data as DoctorRecord[]);
+      } catch (e) {
+        console.error("[PatientDashboard] fetchDoctorRecords:", e);
+      } finally {
+        setRecordsLoading(false);
+      }
+    };
+    fetchDoctorRecords();
+  }, [user?.email]);
 
   const saveVitals = async () => {
     if (!user) {
@@ -64,6 +114,7 @@ export default function PatientDashboard() {
         created_by: user.id,
         linked_patient_user_id: user.id,
         patient_name: user.email ?? "Patient",
+        patient_email: user.email?.toLowerCase(),
         vitals,
         risk_scores: {
           level: risk.level,
@@ -112,6 +163,142 @@ export default function PatientDashboard() {
           </p>
         </motion.div>
 
+        {/* ── Doctor-linked medical records ── */}
+        {(recordsLoading || doctorRecords.length > 0) && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Stethoscope className="w-4 h-4 text-primary" />
+              <h2 className="text-sm font-semibold">My Medical Records from Doctor</h2>
+              {doctorRecords.length > 0 && (
+                <span className="ml-auto text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                  {doctorRecords.length} record{doctorRecords.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            {recordsLoading ? (
+              <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading your records...
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {doctorRecords.map((rec) => {
+                  const isOpen = expandedRecord === rec.id;
+                  const topRisk = Object.entries(rec.risk_scores ?? {}).sort(
+                    (a, b) => ((b[1] as any)?.score ?? 0) - ((a[1] as any)?.score ?? 0)
+                  )[0];
+                  return (
+                    <div key={rec.id} className="rounded-xl border border-border bg-card overflow-hidden">
+                      {/* Record header — always visible */}
+                      <button
+                        className="w-full flex items-center justify-between p-4 hover:bg-muted/20 transition text-left"
+                        onClick={() => setExpandedRecord(isOpen ? null : rec.id)}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                            <FlaskConical className="w-4 h-4 text-primary" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold">{rec.patient_name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {rec.age ? `${rec.age}y · ` : ""}{rec.gender ?? ""}{rec.chief_complaint ? ` · ${rec.chief_complaint}` : ""}
+                            </p>
+                            {rec.diagnoses?.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {rec.diagnoses.slice(0, 3).map((d, i) => (
+                                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{d}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
+                          {topRisk && (
+                            <span className={`text-xs font-bold ${riskColor((topRisk[1] as any)?.level ?? "")}`}>
+                              {topRisk[0].charAt(0).toUpperCase() + topRisk[0].slice(1)}: {(topRisk[1] as any)?.level}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground">
+                            {new Date(rec.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                          </span>
+                          <span className="text-[10px] text-primary">{isOpen ? "▲ Collapse" : "▼ Details"}</span>
+                        </div>
+                      </button>
+
+                      {/* Expanded details */}
+                      {isOpen && (
+                        <div className="border-t border-border p-4 space-y-4">
+                          {/* Risk scores */}
+                          {rec.risk_scores && Object.keys(rec.risk_scores).length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">AI Risk Assessment</p>
+                              <div className="grid grid-cols-3 gap-2">
+                                {Object.entries(rec.risk_scores).map(([key, val]) => (
+                                  <div key={key} className="rounded-lg bg-muted/30 p-3 text-center">
+                                    <p className="text-[10px] capitalize text-muted-foreground">{key}</p>
+                                    <p className={`text-lg font-bold ${riskColor((val as any)?.level ?? "")}`}>{(val as any)?.score ?? 0}%</p>
+                                    <p className={`text-[10px] font-semibold ${riskColor((val as any)?.level ?? "")}`}>{(val as any)?.level}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Vitals */}
+                          {rec.vitals && Object.keys(rec.vitals).length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Vitals</p>
+                              <div className="grid grid-cols-3 gap-2">
+                                {Object.entries(rec.vitals).map(([k, v]) => (
+                                  <div key={k} className="rounded-lg bg-muted/30 p-2.5 text-center">
+                                    <p className="text-[10px] text-muted-foreground">{k}</p>
+                                    <p className="text-xs font-semibold">{v as string}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Lab values */}
+                          {rec.lab_values && Object.keys(rec.lab_values).length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Lab Results</p>
+                              <div className="grid grid-cols-2 gap-2">
+                                {Object.entries(rec.lab_values).map(([name, lab]) => (
+                                  <div key={name} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                                    <span className="text-xs text-muted-foreground">{name}</span>
+                                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${
+                                      (lab as any).status === "High" || (lab as any).status === "Critical" ? "bg-destructive/10 text-destructive" :
+                                      (lab as any).status === "Low" ? "bg-orange-500/10 text-orange-500" :
+                                      "bg-emerald-500/10 text-emerald-500"
+                                    }`}>{(lab as any).value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Medications */}
+                          {rec.medications?.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Medications</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {rec.medications.map((m, i) => (
+                                  <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{m}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+
         {/* Risk score hero */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <motion.div
@@ -154,7 +341,7 @@ export default function PatientDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Button onClick={saveVitals} disabled={saving} variant="outline" className="w-full">
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                Save & share with doctor
+                Save &amp; share with doctor
               </Button>
               <Button onClick={askGemini} disabled={aiLoading} className="w-full gradient-primary text-primary-foreground border-0">
                 {aiLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
@@ -219,7 +406,7 @@ export default function PatientDashboard() {
             </div>
             <div>
               <p className="text-sm font-semibold">My Reports</p>
-              <p className="text-xs text-muted-foreground mt-0.5">View past AI analyses & risk history</p>
+              <p className="text-xs text-muted-foreground mt-0.5">View past AI analyses &amp; risk history</p>
             </div>
           </Link>
         </div>
