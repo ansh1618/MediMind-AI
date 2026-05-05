@@ -84,11 +84,13 @@ async function geminiExtractText(rawText: string, _supabaseClient: unknown): Pro
   return JSON.parse(extractJSONFromText(raw)) as NLPResult;
 }
 
-/** Extract structured data from an image — converts to text description then extracts */
+/** Extract structured data from an image — tries Gemini Vision → Groq Vision → error */
 async function geminiExtractImage(base64: string, mimeType: string, _supabaseClient: unknown): Promise<NLPResult & { raw_ocr_text?: string }> {
   const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+  const GROQ_KEY = import.meta.env.VITE_GROK_API_KEY as string;
 
-  const buildBody = (model: string) => JSON.stringify({
+  // ── 1. Try Gemini Vision models ─────────────────────────────────────────
+  const buildGeminiBody = (model: string) => JSON.stringify({
     contents: [{
       role: "user",
       parts: [
@@ -99,34 +101,59 @@ async function geminiExtractImage(base64: string, mimeType: string, _supabaseCli
     generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
   });
 
-  const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
-
   if (GEMINI_KEY) {
-    for (const model of models) {
+    for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
       try {
         const resp = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: buildBody(model) }
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: buildGeminiBody(model) }
         );
         const data = await resp.json();
-        if (!resp.ok) {
-          console.warn(`[extract-image] ${model} error:`, data?.error?.message ?? data);
-          continue; // try next model
-        }
+        if (!resp.ok) { console.warn(`[vision] ${model} API error:`, data?.error?.message); continue; }
         const content = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
-        if (!content) { console.warn(`[extract-image] ${model} returned empty content`); continue; }
+        if (!content) { console.warn(`[vision] ${model} empty response`); continue; }
         const result = JSON.parse(extractJSONFromText(content)) as NLPResult;
         return { ...result, raw_ocr_text: content };
-      } catch (e) {
-        console.warn(`[extract-image] ${model} threw:`, e);
-      }
+      } catch (e) { console.warn(`[vision] ${model} threw:`, e); }
     }
-  } else {
-    console.warn("[extract-image] VITE_GEMINI_API_KEY not set");
   }
 
-  throw new Error("Image extraction failed. Please paste the record text manually in the box below.");
+  // ── 2. Try Groq Vision (llama-4-scout supports vision) ──────────────────
+  if (GROQ_KEY) {
+    try {
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+      const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_KEY}` },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: EXTRACTION_PROMPT + "\n\nExtract all medical data from this document image and return ONLY valid JSON:" },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          }],
+          temperature: 0.1,
+          max_tokens: 4096,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        const content = data?.choices?.[0]?.message?.content ?? "";
+        if (content) {
+          const result = JSON.parse(extractJSONFromText(content)) as NLPResult;
+          return { ...result, raw_ocr_text: content };
+        }
+      } else {
+        console.warn("[vision] Groq vision error:", data?.error?.message);
+      }
+    } catch (e) { console.warn("[vision] Groq vision threw:", e); }
+  }
+
+  throw new Error("Vision extraction failed. Please paste the record text manually in the box below.");
 }
+
 
 
 const DEMO_RECORD = `Patient: Arun Nair, 61M, P-1007
