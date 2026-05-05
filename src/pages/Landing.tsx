@@ -45,7 +45,7 @@ export default function Landing() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/5 border border-primary/10 text-xs font-medium text-primary mb-6">
               <Zap className="w-3 h-3" />
-              Predictive Clinical Intelligence · Google Solution Challenge 2026
+              Predictive Clinical Intelligence
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.1] mb-5">
               Save lives with
@@ -131,7 +131,7 @@ export default function Landing() {
             <div className="w-6 h-6 rounded-md gradient-primary flex items-center justify-center">
               <Brain className="w-3 h-3 text-primary-foreground" />
             </div>
-            <span className="text-xs font-medium text-muted-foreground">MediMind AI — Google Solution Challenge 2026</span>
+            <span className="text-xs font-medium text-muted-foreground">MediMind AI — Clinical Intelligence Platform</span>
           </div>
           <Link to="/login">
             <Button size="sm" variant="ghost" className="text-xs text-muted-foreground">

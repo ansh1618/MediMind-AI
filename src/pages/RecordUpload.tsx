@@ -8,8 +8,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
+import { callAI } from "@/lib/ai";
 
-// All AI calls go through Supabase Edge Functions — no direct browser API calls.
+const GROQ_API_KEY = import.meta.env.VITE_GROK_API_KEY as string;
 
 const TEXT_SCHEMA = `{
   "patient_name":string,"age":number,"gender":string,"chief_complaint":string,
@@ -19,26 +20,103 @@ const TEXT_SCHEMA = `{
   "risk_scores":{"diabetes":{"score":number,"level":string,"reasoning":string},"cardiac":{"score":number,"level":string,"reasoning":string},"renal":{"score":number,"level":string,"reasoning":string}}
 }`;
 
-/** Extract structured data from raw text via the extract-record edge function */
-async function geminiExtractText(rawText: string, supabaseClient: typeof import("@/integrations/supabase/client")["supabase"]): Promise<NLPResult> {
-  const { data, error } = await supabaseClient.functions.invoke("extract-record", {
-    body: { raw_text: rawText },
-  });
-  if (error) throw new Error(error.message || "Extraction service unavailable");
-  if (data?.error) throw new Error(data.error as string);
-  if (!data?.result) throw new Error("No result returned from extraction service");
-  return data.result as NLPResult;
+const EXTRACTION_PROMPT = `You are a medical NLP engine. Extract structured data from the following patient record and generate risk scores.
+
+Return ONLY valid JSON with this exact schema:
+{
+  "patient_name": "string",
+  "age": number,
+  "gender": "string (M/F)",
+  "chief_complaint": "string",
+  "vitals": { "BP": "string", "HR": "string", "Weight": "string", "Height": "string", "BMI": "string", "SpO2": "string" },
+  "lab_values": { "LabName": { "value": "string with units", "status": "Normal|High|Low|Critical" } },
+  "medications": ["string"],
+  "diagnoses": ["string"],
+  "family_history": "string",
+  "lifestyle": "string",
+  "risk_scores": {
+    "diabetes": { "score": 0, "level": "LOW|MODERATE|HIGH|CRITICAL", "reasoning": "1-sentence" },
+    "cardiac": { "score": 0, "level": "LOW|MODERATE|HIGH|CRITICAL", "reasoning": "1-sentence" },
+    "renal": { "score": 0, "level": "LOW|MODERATE|HIGH|CRITICAL", "reasoning": "1-sentence" }
+  }
+}
+Risk levels: CRITICAL (>80%), HIGH (60-80%), MODERATE (40-60%), LOW (<40%). Return ONLY JSON, no extra text.`;
+
+function extractJSONFromText(raw: string): string {
+  const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  return start !== -1 && end > start ? cleaned.slice(start, end + 1) : cleaned;
 }
 
-/** Extract structured data from an image via the extract-image edge function */
-async function geminiExtractImage(base64: string, mimeType: string, supabaseClient: typeof import("@/integrations/supabase/client")["supabase"]): Promise<NLPResult & { raw_ocr_text?: string }> {
-  const { data, error } = await supabaseClient.functions.invoke("extract-image", {
-    body: { image_base64: base64, mime_type: mimeType },
-  });
-  if (error) throw new Error(error.message || "Image extraction service unavailable");
-  if (data?.error) throw new Error(data.error as string);
-  if (!data?.result) throw new Error("No result returned from image extraction service");
-  return data.result as NLPResult & { raw_ocr_text?: string };
+/** Extract structured data from raw text using Groq directly */
+async function geminiExtractText(rawText: string, _supabaseClient: unknown): Promise<NLPResult> {
+  // Try Groq directly first
+  if (GROQ_API_KEY) {
+    try {
+      const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: EXTRACTION_PROMPT },
+            { role: "user", content: `Patient Record:\n\n${rawText}` },
+          ],
+          temperature: 0.1,
+          max_tokens: 4096,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const content = data?.choices?.[0]?.message?.content ?? "";
+        return JSON.parse(extractJSONFromText(content)) as NLPResult;
+      }
+    } catch (e) {
+      console.warn("[extract] Groq failed, falling back to callAI:", e);
+    }
+  }
+  // Fallback: use callAI which tries Groq → Gemini → edge
+  const raw = await callAI(
+    [{ role: "user", content: `${EXTRACTION_PROMPT}\n\nPatient Record:\n\n${rawText}` }],
+    "general"
+  );
+  return JSON.parse(extractJSONFromText(raw)) as NLPResult;
+}
+
+/** Extract structured data from an image — converts to text description then extracts */
+async function geminiExtractImage(base64: string, mimeType: string, _supabaseClient: unknown): Promise<NLPResult & { raw_ocr_text?: string }> {
+  const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+  // Try Gemini Vision first (it can actually see images)
+  if (GEMINI_KEY) {
+    try {
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: EXTRACTION_PROMPT }] },
+            contents: [{ role: "user", parts: [
+              { text: "Extract data from this medical document image:" },
+              { inline_data: { mime_type: mimeType, data: base64 } },
+            ]}],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+          }),
+        }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        const content = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+        const result = JSON.parse(extractJSONFromText(content)) as NLPResult;
+        return { ...result, raw_ocr_text: content };
+      }
+    } catch (e) {
+      console.warn("[extract-image] Gemini Vision failed:", e);
+    }
+  }
+  // Fallback: ask Groq to process a text description
+  throw new Error("Image extraction requires a working Gemini Vision API key. Please paste the record text instead.");
 }
 
 const DEMO_RECORD = `Patient: Arun Nair, 61M, P-1007

@@ -1,19 +1,16 @@
 /**
- * AI service — routes ALL requests through the `medimind-ai` Supabase Edge Function.
- * No direct browser calls to Gemini/Grok; avoids CORS issues and key exposure.
- *
- * Supported modes (must match the server-side VALID_MODES in medimind-ai/index.ts):
- *   "chat" | "diagnosis" | "report" | "recommendation" | "summary" | "general"
+ * AI service — calls Gemini API directly from browser.
+ * Falls back to medimind-ai edge function if direct call fails.
  */
-import { supabase } from "@/integrations/supabase/client";
+import { callAI } from "@/lib/ai";
 
 export type AITask =
-  | "symptoms"      // maps → "diagnosis"
-  | "diagnosis"     // maps → "diagnosis"
-  | "summary"       // maps → "summary"
-  | "recommendation"// maps → "recommendation"
-  | "report"        // maps → "report"
-  | "general";      // maps → "general"
+  | "symptoms"
+  | "diagnosis"
+  | "summary"
+  | "recommendation"
+  | "report"
+  | "general";
 
 export interface AIRequest {
   task: AITask;
@@ -25,8 +22,7 @@ export interface AIResponse {
   text: string;
 }
 
-/** Map frontend task names to medimind-ai server-side modes */
-const TASK_TO_MODE: Record<AITask, string> = {
+const TASK_TO_MODE: Record<AITask, "diagnosis" | "summary" | "recommendation" | "report" | "general" | "chat"> = {
   symptoms:       "diagnosis",
   diagnosis:      "diagnosis",
   summary:        "summary",
@@ -43,16 +39,8 @@ export async function askGemini(req: AIRequest): Promise<AIResponse> {
       ? `${req.prompt}\n\nContext:\n${JSON.stringify(req.context, null, 2)}`
       : req.prompt;
 
-  const { data, error } = await supabase.functions.invoke("medimind-ai", {
-    body: {
-      messages: [{ role: "user", content: userContent }],
-      mode,
-    },
-  });
-
-  if (error) throw new Error(error.message ?? "AI service unavailable");
-  if (data?.error) throw new Error(data.error as string);
-  return { text: (data?.content as string) ?? "" };
+  const text = await callAI([{ role: "user", content: userContent }], mode);
+  return { text };
 }
 
 // ─── Convenience helpers ──────────────────────────────────────────────────────
