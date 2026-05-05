@@ -158,7 +158,7 @@ export default function Reports() {
       return;
     }
 
-    // PDF or image — extract text via Gemini then auto-analyze
+    // PDF or image — extract text via AI Vision then auto-analyze
     if (file.type === "application/pdf" || file.type.startsWith("image/")) {
       setLoading(true);
       setReportText("");
@@ -176,8 +176,33 @@ export default function Reports() {
 
         let extractedText = "";
 
-        // ── Try Gemini (supports both PDF and images natively) ──
-        if (GEMINI_KEY) {
+        // ── For IMAGES: Try Groq vision FIRST (most reliable) ──
+        if (file.type.startsWith("image/") && GROQ_KEY && !extractedText) {
+          try {
+            const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_KEY}` },
+              body: JSON.stringify({
+                model: "meta-llama/llama-4-scout-17b-16e-instruct",
+                messages: [{ role: "user", content: [
+                  { type: "text", text: EXTRACT_PROMPT },
+                  { type: "image_url", image_url: { url: dataUrl } },
+                ]}],
+                temperature: 0.0, max_tokens: 8192,
+              }),
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+              extractedText = data?.choices?.[0]?.message?.content ?? "";
+              if (extractedText.trim()) console.log("[reports] Groq vision success");
+            } else {
+              console.warn("[reports] Groq vision error:", data?.error?.message);
+            }
+          } catch (e) { console.warn("[reports] Groq vision threw:", e); }
+        }
+
+        // ── Gemini fallback (PDF + images) ──
+        if (!extractedText && GEMINI_KEY) {
           for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
             try {
               const resp = await fetch(
@@ -197,7 +222,7 @@ export default function Reports() {
               const data = await resp.json();
               if (resp.ok) {
                 extractedText = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
-                if (extractedText.trim()) break;
+                if (extractedText.trim()) { console.log(`[reports] ${model} success`); break; }
               } else {
                 console.warn(`[reports] ${model} error:`, data?.error?.message);
               }
@@ -205,32 +230,12 @@ export default function Reports() {
           }
         }
 
-        // ── Fallback: Groq vision (images only) ──
-        if (!extractedText && file.type.startsWith("image/") && GROQ_KEY) {
-          try {
-            const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_KEY}` },
-              body: JSON.stringify({
-                model: "meta-llama/llama-4-scout-17b-16e-instruct",
-                messages: [{ role: "user", content: [
-                  { type: "text", text: EXTRACT_PROMPT },
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ]}],
-                temperature: 0.0, max_tokens: 4096,
-              }),
-            });
-            const data = await resp.json();
-            if (resp.ok) extractedText = data?.choices?.[0]?.message?.content ?? "";
-          } catch (e) { console.warn("[reports] Groq vision threw:", e); }
-        }
-
         if (!extractedText.trim()) {
           throw new Error("Could not extract text from the file. Please paste the report text manually.");
         }
 
         setReportText(extractedText);
-        toast({ title: "File extracted!", description: `Text extracted from ${file.name}. Running analysis...` });
+        toast({ title: "✅ File extracted!", description: `Text extracted from ${file.name}. Running AI analysis...` });
 
         // Auto-analyze the extracted text
         await analyzeText(extractedText);
