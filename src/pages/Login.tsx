@@ -38,18 +38,10 @@ export default function Login() {
   const { session } = useAuth();
   const selectedRole = roles.find((r) => r.id === activeRole)!;
 
-  // ── No auto-redirect on page-load ───────────────────────────────────────
-  // Authenticated users can still visit /login to switch portals.
-  // Navigation happens explicitly in handleGoogleLogin / handleEmailAuth.
-
-
   // ── Google OAuth ────────────────────────────────────────────────────────
   const handleGoogleLogin = async () => {
     try {
-      // Persist the selected role tab so it survives the OAuth page redirect.
-      // useAuth reads this after the callback and assigns the role in user_roles.
       localStorage.setItem("pending_role", activeRole);
-
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -72,40 +64,106 @@ export default function Login() {
     e.preventDefault();
     if (!email.trim() || !password.trim()) return;
     setLoading(true);
+
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+        // ── SIGN UP ──
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { role: activeRole } },
         });
-        if (error) throw error;
+
+        if (signUpError) {
+          // User already registered – switch to sign-in
+          if (
+            signUpError.message.toLowerCase().includes("already registered") ||
+            signUpError.message.toLowerCase().includes("already been registered") ||
+            signUpError.message.toLowerCase().includes("user already exists")
+          ) {
+            toast({
+              title: "Account already exists",
+              description: "This email is already registered. Switching to sign-in.",
+              variant: "destructive",
+            });
+            setIsSignUp(false);
+            setLoading(false);
+            return;
+          }
+          throw signUpError;
+        }
+
+        // If Supabase returned a live session immediately (email confirmation OFF)
+        if (signUpData.session) {
+          localStorage.setItem("pending_role", activeRole);
+          toast({ title: "Account created!", description: `Welcome aboard as ${activeRole}!` });
+          navigate(activeRole === "doctor" ? "/doctor-dashboard" : "/patient-dashboard", { replace: true });
+          return;
+        }
+
+        // Email confirmation is required on this Supabase project.
+        // Try signing in immediately in case the server auto-confirms.
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (!signInError && signInData.session) {
+          localStorage.setItem("pending_role", activeRole);
+          toast({ title: "Account created!", description: `Welcome aboard as ${activeRole}!` });
+          navigate(activeRole === "doctor" ? "/doctor-dashboard" : "/patient-dashboard", { replace: true });
+          return;
+        }
+
+        // Truly needs email confirmation
         toast({
-          title: "Account created",
-          description: `Signed up as ${activeRole}. Signing you in…`,
+          title: "Check your email!",
+          description:
+            "A confirmation link has been sent to your inbox. Click it to activate your account, then sign in here.",
         });
         setIsSignUp(false);
-        // After signup, navigate based on selected role
-        if (activeRole === "doctor") {
-          navigate("/doctor-dashboard", { replace: true });
-        } else {
-          navigate("/patient-dashboard", { replace: true });
-        }
       } else {
-        // Sign out first if already signed in with a different role
+        // ── SIGN IN ──
         if (session) await supabase.auth.signOut();
+
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        // Store the intended role and navigate
-        localStorage.setItem("pending_role", activeRole);
-        if (activeRole === "doctor") {
-          navigate("/doctor-dashboard", { replace: true });
-        } else {
-          navigate("/patient-dashboard", { replace: true });
+
+        if (error) {
+          const msg = error.message.toLowerCase();
+          if (msg.includes("email not confirmed")) {
+            toast({
+              title: "Email not confirmed",
+              description:
+                "Please click the confirmation link in your inbox first, then try signing in again.",
+              variant: "destructive",
+            });
+          } else if (
+            msg.includes("invalid login credentials") ||
+            msg.includes("invalid credentials") ||
+            msg.includes("wrong password")
+          ) {
+            toast({
+              title: "Wrong email or password",
+              description:
+                "Double-check your credentials. If you signed up with Google, use 'Continue with Google' instead.",
+              variant: "destructive",
+            });
+          } else {
+            throw error;
+          }
+          setLoading(false);
+          return;
         }
+
+        localStorage.setItem("pending_role", activeRole);
+        navigate(activeRole === "doctor" ? "/doctor-dashboard" : "/patient-dashboard", { replace: true });
       }
     } catch (err) {
-      toast({ title: "Auth error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+      toast({
+        title: "Auth error",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
