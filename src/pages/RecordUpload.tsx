@@ -221,8 +221,9 @@ export default function RecordUpload() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [patientEmail, setPatientEmail] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const { toast } = useToast();
+  const isDoctor = role === "doctor";
 
   const progressValue = step === "extracting" ? 40 : step === "predicting" ? 75 : step === "done" ? 100 : 0;
   const progressLabel = step === "extracting" ? "Step 1/2 — Extracting medical data with Gemini AI..." : step === "predicting" ? "Step 2/2 — Running risk prediction & AI recommendations..." : "";
@@ -291,7 +292,11 @@ export default function RecordUpload() {
 
   const handleSave = async () => {
     if (!result || !user) return;
-    if (!patientEmail.trim()) {
+
+    // Doctors must link to a patient email; patients save to their own
+    const emailToLink = isDoctor ? patientEmail.trim().toLowerCase() : (user.email?.toLowerCase() ?? "");
+
+    if (isDoctor && !patientEmail.trim()) {
       toast({ title: "Patient email required", description: "Enter the patient's registered email to link this record.", variant: "destructive" });
       return;
     }
@@ -299,7 +304,7 @@ export default function RecordUpload() {
       const { error } = await supabase.from("patient_records").insert({
         created_by: user.id,
         patient_name: result.patient_name,
-        patient_email: patientEmail.trim().toLowerCase(),
+        patient_email: emailToLink || undefined,
         age: result.age,
         gender: result.gender,
         chief_complaint: result.chief_complaint,
@@ -315,8 +320,10 @@ export default function RecordUpload() {
       });
       if (error) throw error;
       setSaved(true);
-      toast({ title: "Record saved!", description: `${result.patient_name}'s record linked to ${patientEmail} successfully.` });
+      const msg = isDoctor ? `${result.patient_name}'s record linked to ${emailToLink}` : `${result.patient_name}'s record saved successfully`;
+      toast({ title: "Record saved!", description: msg });
     } catch (e) {
+      console.error("[handleSave] error:", e);
       toast({ title: "Save failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     }
   };
@@ -545,7 +552,8 @@ export default function RecordUpload() {
               )}
 
               {/* Patient email linkage */}
-              {!saved && (
+              {/* Doctor only: Link record to patient email */}
+              {isDoctor && !saved && (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-2">
                   <div className="flex items-center gap-2">
                     <Mail className="w-4 h-4 text-primary" />
@@ -566,12 +574,12 @@ export default function RecordUpload() {
                 {saved ? (
                   <div className="flex items-center gap-2 text-emerald-500 text-sm">
                     <CheckCircle className="w-4 h-4" />
-                    Saved &amp; linked to {patientEmail}
+                    {isDoctor ? `Saved & linked to ${patientEmail}` : "Record saved successfully"}
                   </div>
                 ) : (
                   <Button onClick={handleSave} className="gradient-primary text-primary-foreground border-0" size="sm">
                     <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
-                    Save &amp; Link to Patient
+                    {isDoctor ? "Save & Link to Patient" : "Save My Record"}
                   </Button>
                 )}
               </div>
