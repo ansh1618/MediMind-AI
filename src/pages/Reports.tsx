@@ -147,23 +147,106 @@ export default function Reports() {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setSelectedReport(null);
+    setOriginalReport(null);
+
+    // Plain text files — read directly
     if (file.type === "text/plain" || file.name.endsWith(".txt") || file.name.endsWith(".csv")) {
-      setReportText(await file.text());
-    } else if (file.type === "application/pdf" || file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(",")[1];
-        const prompt = file.type === "application/pdf"
-          ? `This is a base64-encoded PDF medical report. Extract all text and analyze it.`
-          : `This is a base64-encoded image of a medical report. Extract all text using OCR and analyze it.`;
-        setReportText(`[File: ${file.name}]\n${prompt}\n\nBase64 content (first 5000 chars): ${base64?.substring(0, 5000)}`);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      toast({ title: "Unsupported file", description: "Please upload a TXT, PDF, or image file.", variant: "destructive" });
+      const text = await file.text();
+      setReportText(text);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
     }
+
+    // PDF or image — extract text via Gemini then auto-analyze
+    if (file.type === "application/pdf" || file.type.startsWith("image/")) {
+      setLoading(true);
+      setReportText("");
+      try {
+        const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+        const GROQ_KEY = import.meta.env.VITE_GROK_API_KEY as string;
+        const dataUrl = await new Promise<string>((res) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+        const base64 = dataUrl.split(",")[1];
+
+        const EXTRACT_PROMPT = "You are a medical document OCR engine. Extract ALL text from this document exactly as written — preserve lab values, numbers, units, doctor notes, dates, and patient info. Return only the extracted plain text, no markdown, no commentary.";
+
+        let extractedText = "";
+
+        // ── Try Gemini (supports both PDF and images natively) ──
+        if (GEMINI_KEY) {
+          for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
+            try {
+              const resp = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    contents: [{ role: "user", parts: [
+                      { text: EXTRACT_PROMPT },
+                      { inline_data: { mime_type: file.type, data: base64 } },
+                    ]}],
+                    generationConfig: { temperature: 0.0, maxOutputTokens: 8192 },
+                  }),
+                }
+              );
+              const data = await resp.json();
+              if (resp.ok) {
+                extractedText = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+                if (extractedText.trim()) break;
+              } else {
+                console.warn(`[reports] ${model} error:`, data?.error?.message);
+              }
+            } catch (e) { console.warn(`[reports] ${model} threw:`, e); }
+          }
+        }
+
+        // ── Fallback: Groq vision (images only) ──
+        if (!extractedText && file.type.startsWith("image/") && GROQ_KEY) {
+          try {
+            const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_KEY}` },
+              body: JSON.stringify({
+                model: "meta-llama/llama-4-scout-17b-16e-instruct",
+                messages: [{ role: "user", content: [
+                  { type: "text", text: EXTRACT_PROMPT },
+                  { type: "image_url", image_url: { url: dataUrl } },
+                ]}],
+                temperature: 0.0, max_tokens: 4096,
+              }),
+            });
+            const data = await resp.json();
+            if (resp.ok) extractedText = data?.choices?.[0]?.message?.content ?? "";
+          } catch (e) { console.warn("[reports] Groq vision threw:", e); }
+        }
+
+        if (!extractedText.trim()) {
+          throw new Error("Could not extract text from the file. Please paste the report text manually.");
+        }
+
+        setReportText(extractedText);
+        toast({ title: "File extracted!", description: `Text extracted from ${file.name}. Running analysis...` });
+
+        // Auto-analyze the extracted text
+        await analyzeText(extractedText);
+
+      } catch (err) {
+        toast({ title: "Extraction failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+        setLoading(false);
+      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    toast({ title: "Unsupported file", description: "Please upload a TXT, PDF, or image file.", variant: "destructive" });
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
 
   const clearAll = () => {
     setReportText("");
