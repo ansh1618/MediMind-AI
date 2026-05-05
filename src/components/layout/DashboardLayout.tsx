@@ -41,7 +41,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const config = roleConfig[primaryRole] ?? roleConfig["patient"];
   const RoleIcon = config.icon;
 
-  const handleSignOut = async () => { await signOut(); navigate("/login"); };
+  const handleSignOut = async () => {
+    try {
+      localStorage.removeItem("pending_role");
+      await signOut();
+    } catch (e) {
+      console.error("[DashboardLayout] signOut error:", e);
+    } finally {
+      navigate("/login", { replace: true });
+    }
+  };
 
   const NavContent = () => (
     <div className="flex flex-col h-full">
